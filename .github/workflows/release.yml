@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          EXT=""
+          [ "$GOOS" = "windows" ] && EXT=".exe"
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w" \
+            -o "dist/agy-rotator${EXT}" ./cmd/agy-rotator
+
+      - name: Package
+        env:
+          GOOS: ${{ matrix.goos }}
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          if [ "$GOOS" = "windows" ]; then
+            zip -j "dist/agy-rotator_${VERSION}_${GOOS}_${{ matrix.goarch }}.zip" dist/agy-rotator.exe
+            rm dist/agy-rotator.exe
+          else
+            tar -czf "dist/agy-rotator_${VERSION}_${GOOS}_${{ matrix.goarch }}.tar.gz" -C dist agy-rotator
+            rm dist/agy-rotator
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > checksums.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
